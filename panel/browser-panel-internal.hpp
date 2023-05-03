@@ -35,6 +35,7 @@ public:
 	CefRefPtr<CefBrowser> cefBrowser;
 	std::string url;
 	std::string script;
+	ControlLevel controlLevel;
 	CefRefPtr<CefRequestContext> rqc;
 	QTimer timer;
 #ifndef __APPLE__
@@ -53,6 +54,7 @@ public:
 	virtual void closeBrowser() override;
 	virtual void reloadPage() override;
 	virtual bool zoomPage(int direction) override;
+	virtual void setControlLevel(int controlLevel) override;
 
 	void Resize();
 

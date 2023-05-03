@@ -16,6 +16,15 @@
 #include <obs-nix-platform.h>
 #endif
 
+enum class ControlLevel : int {
+	None,
+	ReadObs,
+	ReadUser,
+	Basic,
+	Advanced,
+	All,
+};
+
 struct QCefCookieManager {
 	virtual ~QCefCookieManager() {}
 
@@ -47,6 +56,7 @@ public:
 	virtual void closeBrowser() = 0;
 	virtual void reloadPage() = 0;
 	virtual bool zoomPage(int direction) = 0;
+	virtual void setControlLevel(int controlLevel) = 0;
 
 signals:
 	void titleChanged(const QString &title);

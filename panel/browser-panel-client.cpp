@@ -13,12 +13,15 @@
 #include <QClipboard>
 
 #include <obs-module.h>
+#include "json11/json11.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #endif
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include <X11/Xlib.h>
 #endif
+#include <obs-frontend-api.h>
+#include <obs.hpp>
 
 #define MENU_ITEM_DEVTOOLS MENU_ID_CUSTOM_FIRST
 #define MENU_ITEM_MUTE MENU_ID_CUSTOM_FIRST + 1
@@ -26,6 +29,8 @@
 #define MENU_ITEM_ZOOM_RESET MENU_ID_CUSTOM_FIRST + 3
 #define MENU_ITEM_ZOOM_OUT MENU_ID_CUSTOM_FIRST + 4
 #define MENU_ITEM_COPY_URL MENU_ID_CUSTOM_FIRST + 5
+
+using namespace json11;
 
 /* CefClient */
 CefRefPtr<CefLoadHandler> QCefBrowserClient::GetLoadHandler()
@@ -525,4 +530,174 @@ bool QCefBrowserClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
 		return widget->zoomPage(0);
 	}
 	return false;
+}
+
+inline bool QCefBrowserClient::valid() const
+{
+	return !!widget && widget->isEnabled();
+}
+
+bool QCefBrowserClient::OnProcessMessageReceived(
+	CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, CefProcessId,
+	CefRefPtr<CefProcessMessage> message)
+{
+	const std::string &name = message->GetName();
+	CefRefPtr<CefListValue> input_args = message->GetArgumentList();
+	Json json;
+
+	if (!valid()) {
+		return false;
+	}
+
+	auto webpage_control_level = widget->controlLevel;
+
+	// Fall-through switch, so that higher levels also have lower-level rights
+	switch (webpage_control_level) {
+	case ControlLevel::All:
+		if (name == "startRecording") {
+			obs_frontend_recording_start();
+		} else if (name == "stopRecording") {
+			obs_frontend_recording_stop();
+		} else if (name == "startStreaming") {
+			obs_frontend_streaming_start();
+		} else if (name == "stopStreaming") {
+			obs_frontend_streaming_stop();
+		} else if (name == "pauseRecording") {
+			obs_frontend_recording_pause(true);
+		} else if (name == "unpauseRecording") {
+			obs_frontend_recording_pause(false);
+		} else if (name == "startVirtualcam") {
+			obs_frontend_start_virtualcam();
+		} else if (name == "stopVirtualcam") {
+			obs_frontend_stop_virtualcam();
+		}
+		[[fallthrough]];
+	case ControlLevel::Advanced:
+		if (name == "startReplayBuffer") {
+			obs_frontend_replay_buffer_start();
+		} else if (name == "stopReplayBuffer") {
+			obs_frontend_replay_buffer_stop();
+		} else if (name == "setCurrentScene") {
+			const std::string scene_name =
+				input_args->GetString(1).ToString();
+			OBSSourceAutoRelease source =
+				obs_get_source_by_name(scene_name.c_str());
+			if (!source) {
+				blog(LOG_WARNING,
+				     "Browser Widget '%s' tried to switch to scene '%s' which doesn't exist",
+				     widget->url, scene_name.c_str());
+			} else if (!obs_source_is_scene(source)) {
+				blog(LOG_WARNING,
+				     "Browser Widget '%s' tried to switch to '%s' which isn't a scene",
+				     widget->url, scene_name.c_str());
+			} else {
+				obs_frontend_set_current_scene(source);
+			}
+		} else if (name == "setCurrentTransition") {
+			const std::string transition_name =
+				input_args->GetString(1).ToString();
+			obs_frontend_source_list transitions = {};
+			obs_frontend_get_transitions(&transitions);
+
+			OBSSourceAutoRelease transition;
+			for (size_t i = 0; i < transitions.sources.num; i++) {
+				obs_source_t *source =
+					transitions.sources.array[i];
+				if (obs_source_get_name(source) ==
+				    transition_name) {
+					transition = obs_source_get_ref(source);
+					break;
+				}
+			}
+
+			obs_frontend_source_list_free(&transitions);
+
+			if (transition)
+				obs_frontend_set_current_transition(transition);
+			else
+				blog(LOG_WARNING,
+				     "Browser Widget '%s' tried to change the current transition to '%s' which doesn't exist",
+				     widget->url, transition_name.c_str());
+		}
+		[[fallthrough]];
+	case ControlLevel::Basic:
+		if (name == "saveReplayBuffer") {
+			obs_frontend_replay_buffer_save();
+		}
+		[[fallthrough]];
+	case ControlLevel::ReadUser:
+		if (name == "getScenes") {
+			struct obs_frontend_source_list list = {};
+			obs_frontend_get_scenes(&list);
+			std::vector<const char *> scenes_vector;
+			for (size_t i = 0; i < list.sources.num; i++) {
+				obs_source_t *source = list.sources.array[i];
+				scenes_vector.push_back(
+					obs_source_get_name(source));
+			}
+			json = scenes_vector;
+			obs_frontend_source_list_free(&list);
+		} else if (name == "getCurrentScene") {
+			OBSSourceAutoRelease current_scene =
+				obs_frontend_get_current_scene();
+
+			if (!current_scene)
+				return false;
+
+			const char *name = obs_source_get_name(current_scene);
+			if (!name)
+				return false;
+
+			json = Json::object{
+				{"name", name},
+				{"width",
+				 (int)obs_source_get_width(current_scene)},
+				{"height",
+				 (int)obs_source_get_height(current_scene)}};
+		} else if (name == "getTransitions") {
+			struct obs_frontend_source_list list = {};
+			obs_frontend_get_transitions(&list);
+			std::vector<const char *> transitions_vector;
+			for (size_t i = 0; i < list.sources.num; i++) {
+				obs_source_t *source = list.sources.array[i];
+				transitions_vector.push_back(
+					obs_source_get_name(source));
+			}
+			json = transitions_vector;
+			obs_frontend_source_list_free(&list);
+		} else if (name == "getCurrentTransition") {
+			OBSSourceAutoRelease source =
+				obs_frontend_get_current_transition();
+			json = obs_source_get_name(source);
+		}
+		[[fallthrough]];
+	case ControlLevel::ReadObs:
+		if (name == "getStatus") {
+			json = Json::object{
+				{"recording", obs_frontend_recording_active()},
+				{"streaming", obs_frontend_streaming_active()},
+				{"recordingPaused",
+				 obs_frontend_recording_paused()},
+				{"replaybuffer",
+				 obs_frontend_replay_buffer_active()},
+				{"virtualcam",
+				 obs_frontend_virtualcam_active()}};
+		}
+		[[fallthrough]];
+	case ControlLevel::None:
+		if (name == "getControlLevel") {
+			json = (int)webpage_control_level;
+		}
+	}
+
+	CefRefPtr<CefProcessMessage> msg =
+		CefProcessMessage::Create("executeCallback");
+
+	CefRefPtr<CefListValue> execute_args = msg->GetArgumentList();
+	execute_args->SetInt(0, input_args->GetInt(0));
+	execute_args->SetString(1, json.dump());
+
+	SendBrowserProcessMessage(browser, PID_RENDERER, msg);
+
+	return true;
 }

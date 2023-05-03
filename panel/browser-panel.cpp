@@ -497,6 +497,17 @@ bool QCefWidgetInternal::zoomPage(int direction)
 	return false;
 }
 
+void QCefWidgetInternal::setControlLevel(int newControlLevel)
+{
+	if (newControlLevel > (int)ControlLevel::All) {
+		controlLevel = ControlLevel::All;
+	} else if (newControlLevel < (int)ControlLevel::None) {
+		controlLevel = ControlLevel::None;
+	} else {
+		controlLevel = (ControlLevel)newControlLevel;
+	}
+}
+
 /* ------------------------------------------------------------------------- */
 
 struct QCefInternal : QCef {

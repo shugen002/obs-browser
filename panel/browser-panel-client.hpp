@@ -114,6 +114,13 @@ public:
 				CefRefPtr<CefJSDialogCallback> callback,
 				bool &suppress_message) override;
 
+	inline bool valid() const;
+	virtual bool
+	OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+				 CefRefPtr<CefFrame> frame,
+				 CefProcessId source_process,
+				 CefRefPtr<CefProcessMessage> message) override;
+
 	QCefWidgetInternal *widget = nullptr;
 	std::string script;
 	bool allowAllPopups;
